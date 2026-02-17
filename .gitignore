@@ -1,0 +1,18 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# CSV files (output)
+*.csv
+
+# IDEs
+.vscode/
+.idea/
