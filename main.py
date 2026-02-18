@@ -86,10 +86,25 @@ class GoogleMapsSeleniumScraper:
                     break
 
             if results_container:
-                for _ in range(10):
+                last_height = self.driver.execute_script("return arguments[0].scrollHeight", results_container)
+                for _ in range(15): # Max 15 scroll attempts
                     self.driver.execute_script("arguments[0].scrollTo(0, arguments[0].scrollHeight)", results_container)
-                    time.sleep(2)
-                    if len(self.driver.find_elements(By.CSS_SELECTOR, "a.hfpxzc")) >= max_results: break
+                    time.sleep(2.5)
+
+                    # 1. Check if we reached the desired count
+                    current_results = self.driver.find_elements(By.CSS_SELECTOR, "a.hfpxzc")
+                    if len(current_results) >= max_results:
+                        break
+
+                    # 2. Check if we reached the absolute end of the list (height stopped changing)
+                    new_height = self.driver.execute_script("return arguments[0].scrollHeight", results_container)
+                    if new_height == last_height:
+                        # Sometimes it takes a bit more to load, try one last tiny nudge
+                        time.sleep(1)
+                        if self.driver.execute_script("return arguments[0].scrollHeight", results_container) == last_height:
+                            print("Reached the end of the results list.")
+                            break
+                    last_height = new_height
         except:
             pass
 
@@ -123,7 +138,7 @@ class GoogleMapsSeleniumScraper:
             # Metadata
             details['google_maps_url'] = self.driver.current_url
 
-            # Deduplication check using URL (cleaned of parameters that might change)
+            # Deduplication check using URL (cleaned of parameters)
             url_id = details['google_maps_url'].split('/data=')[0]
             if url_id in self.seen_urls:
                 print(f"Skipping duplicate URL: {url_id}")
@@ -217,10 +232,8 @@ class GoogleMapsSeleniumScraper:
             # Photos
             def extract_urls_from_photo_container(limit=5):
                 urls = []
-                # Looking for images in the photo pane
                 photo_elements = self.driver.find_elements(By.XPATH, "//div[contains(@style, 'background-image')]")
                 if not photo_elements:
-                    # Alternative for some layouts
                     photo_elements = self.driver.find_elements(By.TAG_NAME, "img")
 
                 for pe in photo_elements:
@@ -232,7 +245,7 @@ class GoogleMapsSeleniumScraper:
                         url_match = re.search(r'url\("(.*?)"\)', style)
                         if url_match: url = url_match.group(1)
 
-                    if url and "googleusercontent" in url: # Ensure it's a content URL
+                    if url and "googleusercontent" in url:
                         if url not in urls: urls.append(url)
                     if len(urls) >= limit: break
                 return urls
@@ -244,17 +257,12 @@ class GoogleMapsSeleniumScraper:
                 if photo_tab:
                     photo_tab[0].click()
                     time.sleep(3)
-
-                    # Default view is 'All'
                     details['photo_urls_all'] = "; ".join(extract_urls_from_photo_container(5))
-
-                    # Try to find 'Menu' filter button/radio
                     menu_filter = self.driver.find_elements(By.XPATH, "//button[contains(., 'Menu')] | //div[@role='radio' and contains(., 'Menu')]")
                     if menu_filter:
                         menu_filter[0].click()
                         time.sleep(2)
                         details['photo_urls_menu'] = "; ".join(extract_urls_from_photo_container(5))
-
                     overview_tab = self.driver.find_elements(By.XPATH, "//button[@role='tab' and contains(., 'Overview')]")
                     if overview_tab: overview_tab[0].click()
                     time.sleep(1)
