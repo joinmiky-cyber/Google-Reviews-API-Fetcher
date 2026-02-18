@@ -7,6 +7,7 @@ A Python-based scraper using Selenium to extract business information from Googl
 - Extracts GPS coordinates (Latitude/Longitude) and Google Maps URL.
 - Detailed review extraction (Author, Rating, Date, Text).
 - Photo URL extraction.
+- **Neighborhood-based coverage**: Automatically iterates through 10 major neighborhoods in Addis Ababa (Bole, Piazza, Kazanchis, etc.) to ensure comprehensive data collection.
 - Deduplication of results in-memory and on-disk.
 - CLI interface for easy usage.
 
@@ -21,18 +22,18 @@ A Python-based scraper using Selenium to extract business information from Googl
 
 ## Usage
 
-Run the scraper via the command line:
+Run the scraper via the command line. **By default, the browser will open so you can see the progress.**
 
 ```bash
-python3 main.py --category "Restaurants" --location "Bole, Addis Ababa" --max 20 --output bole_restaurants.csv
+python3 main.py --category "Restaurants" --max 10 --output addis_restaurants.csv
 ```
 
 ### Options
-- `--category`: The type of business to search for (e.g., "Gyms", "Cafes").
-- `--location`: The area to search in (e.g., "Piazza, Addis Ababa").
-- `--max`: Maximum number of results to scrape.
+- `--category`: The type of business to search for (e.g., "Gyms", "Cafes"). Default is "Restaurants".
+- `--location`: Specify a single location (e.g., "Bole, Addis Ababa"). If omitted, the scraper will loop through a predefined list of Addis Ababa neighborhoods.
+- `--max`: Maximum number of results to scrape **per neighborhood**.
 - `--output`: Output CSV filename (defaults to `google_maps_data.csv`).
-- `--gui`: Run with the browser visible (not headless).
+- `--headless`: Run the scraper in the background (no browser window).
 
 ## Output
 The data is saved to a CSV file with the following columns:
