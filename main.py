@@ -1,239 +1,320 @@
+import csv
 import time
+import re
+import argparse
 import pandas as pd
 from selenium import webdriver
-from selenium.webdriver.firefox.service import Service
-from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.action_chains import ActionChains
-
-# Neighborhoods in Addis Ababa
-ADDIS_NEIGHBORHOODS = [
-    "Bole", "Kazanchis", "Piazza", "Old Airport", "Sarbet",
-    "Haya Hulet", "22 Mazoria", "Merkato", "Kirkos", "Akaki Kality",
-    "Nifas Silk Lafto", "Kolfe Keranio", "Gullele", "Lideta", "Yeka"
-]
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementClickInterceptedException, StaleElementReferenceException
 
 class GoogleMapsSeleniumScraper:
-    def __init__(self, category, neighborhoods=None):
-        self.category = category
-        self.neighborhoods = neighborhoods or ADDIS_NEIGHBORHOODS
-        self.results = []
+    def __init__(self, headless=True):
+        self.options = Options()
+        if headless:
+            self.options.add_argument("--headless")
+        self.options.set_preference("general.useragent.override", "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0")
+        self.options.set_preference("intl.accept_languages", "en-US, en")
 
-        # User-provided paths
-        self.profile_path = "/Users/michaeldinku/Library/Application Support/Firefox/Profiles/bvnl8r56.default-release"
-        self.geckodriver_path = "/Users/michaeldinku/Downloads/geckodriver 2"
+        self.driver = webdriver.Firefox(options=self.options)
+        self.wait = WebDriverWait(self.driver, 15)
+        self.seen_businesses = set()
 
-        self.setup_driver()
-
-    def setup_driver(self):
-        options = Options()
-        # Correct way to load an existing Firefox profile directory
-        options.add_argument("-profile")
-        options.add_argument(self.profile_path)
-
-        service = Service(executable_path=self.geckodriver_path)
-        self.driver = webdriver.Firefox(service=service, options=options)
-        self.wait = WebDriverWait(self.driver, 10)
-
-    def scrape(self):
+    def __del__(self):
         try:
-            for neighborhood in self.neighborhoods:
-                search_query = f"{self.category} in {neighborhood}, Addis Ababa"
-                print(f"Searching for: {search_query}")
-
-                url = f"https://www.google.com/maps/search/{search_query.replace(' ', '+')}"
-                self.driver.get(url)
-
-                # Wait for results
-                try:
-                    self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'div[role="feed"]')))
-                except:
-                    print(f"No results feed found for {neighborhood}")
-                    continue
-
-                self.scroll_feed()
-
-                # Get all result links
-                links = self.driver.find_elements(By.CSS_SELECTOR, 'a.hfpxzc')
-                print(f"Found {len(links)} potential listings in {neighborhood}")
-
-                for i in range(len(links)):
-                    try:
-                        # Re-find links to avoid stale element reference
-                        links = self.driver.find_elements(By.CSS_SELECTOR, 'a.hfpxzc')
-                        if i >= len(links): break
-
-                        link = links[i]
-                        self.driver.execute_script("arguments[0].click();", link)
-                        time.sleep(3) # Wait for details to load
-
-                        data = self.extract_business_details()
-                        if data:
-                            self.results.append(data)
-                    except Exception as e:
-                        print(f"Error extracting listing: {e}")
-        finally:
             self.driver.quit()
+        except:
+            pass
 
-        return self.results
-
-    def scroll_feed(self):
-        feed_selector = 'div[role="feed"]'
+    def bypass_cookies(self):
         try:
-            feed = self.driver.find_element(By.CSS_SELECTOR, feed_selector)
-            last_height = self.driver.execute_script("return arguments[0].scrollHeight", feed)
-
-            while True:
-                self.driver.execute_script("arguments[0].scrollTo(0, arguments[0].scrollHeight)", feed)
-                time.sleep(2)
-                new_height = self.driver.execute_script("return arguments[0].scrollHeight", feed)
-                if new_height == last_height:
+            buttons = self.driver.find_elements(By.XPATH, "//button")
+            for btn in buttons:
+                if any(text in btn.text.lower() for text in ["accept all", "agree", "i agree", "tout accepter"]):
+                    btn.click()
+                    time.sleep(2)
                     break
-                last_height = new_height
-                if last_height > 10000: break
-        except Exception as e:
-            print(f"Error scrolling: {e}")
+        except:
+            pass
 
-    def extract_business_details(self):
-        try:
-            name = "N/A"
+    def search_businesses(self, query, retries=2):
+        for attempt in range(retries + 1):
             try:
-                name_el = self.driver.find_element(By.CSS_SELECTOR, 'h1.DUwDvf')
-                name = name_el.text
-            except: pass
+                print(f"Searching for: {query} (Attempt {attempt + 1})")
+                self.driver.get("https://www.google.com/maps?hl=en")
+                self.bypass_cookies()
 
-            # Check for duplicates
-            if any(r['Name'] == name for r in self.results):
+                search_box = self.wait.until(EC.presence_of_element_located((By.XPATH, "//input[@name='q']")))
+                search_box.clear()
+                search_box.send_keys(query)
+                search_box.send_keys(Keys.ENTER)
+                time.sleep(5)
+
+                if self.driver.find_elements(By.CSS_SELECTOR, "a.hfpxzc") or self.driver.find_elements(By.XPATH, "//button[@role='tab']"):
+                    if not self.driver.find_elements(By.CSS_SELECTOR, "a.hfpxzc") and self.driver.find_elements(By.XPATH, "//button[@role='tab']"):
+                        return ["DIRECT_MATCH"]
+                    return self.driver.find_elements(By.CSS_SELECTOR, "a.hfpxzc")
+            except Exception:
+                pass
+            time.sleep(2)
+        return []
+
+    def scroll_results(self, max_results=20):
+        try:
+            results_container = None
+            for xpath in ["//div[@role='feed']", "//div[contains(@aria-label, 'Results for')]", "//div[contains(@class, 'm6QErb')]"]:
+                elems = self.driver.find_elements(By.XPATH, xpath)
+                if elems:
+                    results_container = elems[0]
+                    break
+
+            if results_container:
+                for _ in range(10):
+                    self.driver.execute_script("arguments[0].scrollTo(0, arguments[0].scrollHeight)", results_container)
+                    time.sleep(2)
+                    if len(self.driver.find_elements(By.CSS_SELECTOR, "a.hfpxzc")) >= max_results: break
+        except:
+            pass
+
+    def clean_text(self, text):
+        if not text: return "N/A"
+        cleaned = re.sub(r'^[^\w\s\+]+', '', text, flags=re.MULTILINE).strip()
+        cleaned = cleaned.replace('', 'Yes:').replace('', 'No:')
+        return cleaned
+
+    def extract_gps(self, url):
+        # Coordinates in Google Maps URL can be in multiple places
+        # 1. @lat,long
+        # 2. !3dlat!4dlong
+        match = re.search(r'@([-.\d]+),([-.\d]+)', url)
+        if match:
+            return match.group(1), match.group(2)
+
+        match_3d = re.search(r'!3d([-.\d]+)!4d([-.\d]+)', url)
+        if match_3d:
+            return match_3d.group(1), match_3d.group(2)
+
+        return "N/A", "N/A"
+
+    def scrape_business_details(self, business_element=None):
+        if business_element and business_element != "DIRECT_MATCH":
+            try:
+                self.driver.execute_script("arguments[0].scrollIntoView();", business_element)
+                try: business_element.click()
+                except: self.driver.execute_script("arguments[0].click();", business_element)
+                time.sleep(5) # Increase wait for URL to update
+            except:
                 return None
 
-            phone = "N/A"
+        details = {}
+        try:
+            # Name
             try:
-                phone_el = self.driver.find_element(By.CSS_SELECTOR, 'button[data-tooltip="Copy phone number"]')
-                phone = phone_el.text
-            except: pass
-
-            address = "N/A"
-            try:
-                address_el = self.driver.find_element(By.CSS_SELECTOR, 'button[data-tooltip="Copy address"]')
-                address = address_el.text
-            except: pass
-
-            website = "N/A"
-            try:
-                website_el = self.driver.find_element(By.CSS_SELECTOR, 'a[data-tooltip="Open website"]')
-                website = website_el.get_attribute('href')
-            except: pass
-
-            rating = "N/A"
-            try:
-                rating_el = self.driver.find_element(By.CSS_SELECTOR, 'div.F7kYSe span.ce4YCe')
-                rating = rating_el.text.split('\n')[0]
+                details['name'] = self.driver.find_element(By.CSS_SELECTOR, "h1.DUwDvf").text
             except:
+                h1s = self.driver.find_elements(By.TAG_NAME, "h1")
+                details['name'] = "N/A"
+                for h in h1s:
+                    if h.text and h.text != "Results":
+                        details['name'] = h.text
+                        break
+
+            biz_id = f"{details['name']}"
+            if biz_id in self.seen_businesses:
+                print(f"Skipping duplicate: {biz_id}")
+                return "DUPLICATE"
+
+            details['google_maps_url'] = self.driver.current_url
+            details['latitude'], details['longitude'] = self.extract_gps(details['google_maps_url'])
+
+            # Basic Info
+            try: details['address'] = self.clean_text(self.driver.find_element(By.XPATH, "//button[contains(@aria-label, 'Address')]").text)
+            except: details['address'] = "N/A"
+            try: details['phone'] = self.clean_text(self.driver.find_element(By.XPATH, "//button[contains(@aria-label, 'Phone')]").text)
+            except: details['phone'] = "N/A"
+            try: details['website'] = self.driver.find_element(By.XPATH, "//a[contains(@aria-label, 'Website')]").get_attribute("href")
+            except: details['website'] = "N/A"
+
+            # Rating
+            try:
+                rating_elem = self.driver.find_element(By.XPATH, "//span[contains(@aria-label, 'stars') and string-length(@aria-label) > 6]")
+                details['rating'] = rating_elem.get_attribute("aria-label")
+            except:
+                try: details['rating'] = self.driver.find_element(By.CSS_SELECTOR, "span.ce40Ff").text
+                except: details['rating'] = "N/A"
+
+            # Tabs
+            tabs = self.driver.find_elements(By.XPATH, "//button[@role='tab']")
+            tab_map = {t.text.split('\n')[0]: t for t in tabs if t.text}
+
+            # About
+            if "About" in tab_map:
                 try:
-                    rating_el = self.driver.find_element(By.CSS_SELECTOR, 'span.TTNQpf')
-                    rating = rating_el.text
+                    tab_map["About"].click()
+                    time.sleep(2)
+                    sections = self.driver.find_elements(By.XPATH, "//div[@role='region']")
+                    about_info = []
+                    for sec in sections:
+                        title = sec.get_attribute("aria-label") or "Info"
+                        items = sec.find_elements(By.XPATH, ".//li | .//div[contains(@aria-label, ':')]")
+                        if items:
+                            item_texts = [self.clean_text(i.text or i.get_attribute("aria-label")) for i in items if (i.text or i.get_attribute("aria-label"))]
+                            about_info.append(f"{title}: {', '.join(item_texts)}")
+                    details['about'] = "; ".join(about_info)
+                    # Re-find Overview to go back
+                    tabs = self.driver.find_elements(By.XPATH, "//button[@role='tab']")
+                    for t in tabs:
+                        if "Overview" in t.text:
+                            t.click()
+                            break
+                    time.sleep(1)
+                except:
+                    details['about'] = "N/A"
+            else:
+                details['about'] = "N/A"
+
+            # Reviews
+            review_list = []
+            review_found = False
+            # Re-find tabs as they might have changed
+            tabs = self.driver.find_elements(By.XPATH, "//button[@role='tab']")
+            for t in tabs:
+                if "Reviews" in t.text:
+                    t.click()
+                    review_found = True
+                    break
+
+            if not review_found:
+                try:
+                    review_count_btn = self.driver.find_element(By.XPATH, "//button[contains(translate(@aria-label, 'REVIEWS', 'reviews'), 'reviews')]")
+                    review_count_btn.click()
+                    review_found = True
                 except: pass
+
+            if review_found:
+                time.sleep(3)
+                review_containers = self.driver.find_elements(By.CSS_SELECTOR, "div.jftiEf")
+                for rc in review_containers[:10]:
+                    try:
+                        author = rc.find_element(By.CSS_SELECTOR, "div.d4r55").text
+                        rating_val = rc.find_element(By.CSS_SELECTOR, "span.kvMY9b").get_attribute("aria-label")
+                        date = rc.find_element(By.CSS_SELECTOR, "span.rsqawe").text
+                        # Click "More" if text is truncated
+                        try:
+                            more_btn = rc.find_element(By.CSS_SELECTOR, "button.w8Bnuf")
+                            more_btn.click()
+                            time.sleep(0.5)
+                        except: pass
+                        text = rc.find_element(By.CSS_SELECTOR, "span.wiI7Nr").text
+                        review_list.append(f"{author} ({rating_val}, {date}): {text}")
+                    except: pass
+                details['reviews'] = " | ".join(review_list) if review_list else "N/A"
+                # Go back
+                tabs = self.driver.find_elements(By.XPATH, "//button[@role='tab']")
+                for t in tabs:
+                    if "Overview" in t.text:
+                        t.click()
+                        break
+                time.sleep(1)
+            else:
+                details['reviews'] = "N/A"
 
             # Photos
             photo_urls = []
-            try:
-                photo_elements = self.driver.find_elements(By.CSS_SELECTOR, 'button.g27YNc img')
-                for img in photo_elements[:5]:
-                    src = img.get_attribute('src')
-                    if src: photo_urls.append(src)
-            except: pass
-
-            # Coordinates from URL
-            url = self.driver.current_url
-            lat, lon = "N/A", "N/A"
-            if "!3d" in url and "!4d" in url:
-                try:
-                    parts = url.split("!3d")[1].split("!4d")
-                    lat = parts[0]
-                    lon = parts[1].split("!")[0]
-                except: pass
-            elif "@" in url:
-                try:
-                    coords = url.split("@")[1].split(",")[0:2]
-                    lat, lon = coords[0], coords[1]
-                except: pass
-
-            # Reviews
-            reviews = self.extract_reviews()
-
-            return {
-                'Name': name,
-                'Phone': phone,
-                'Address': address,
-                'Website': website,
-                'Rating': rating,
-                'Latitude': lat,
-                'Longitude': lon,
-                'Photo URLs': " | ".join(photo_urls),
-                'Top Reviews': " || ".join(reviews),
-            }
-        except Exception as e:
-            print(f"Failed to extract details: {e}")
-            return None
-
-    def extract_reviews(self):
-        reviews_list = []
-        try:
-            # Click Reviews tab
-            tabs = self.driver.find_elements(By.CSS_SELECTOR, 'button[role="tab"]')
-            for tab in tabs:
-                if "Reviews" in tab.text:
-                    tab.click()
-                    time.sleep(2)
+            tabs = self.driver.find_elements(By.XPATH, "//button[@role='tab']")
+            photo_tab = None
+            for t in tabs:
+                if "Photos" in t.text:
+                    photo_tab = t
                     break
 
-            # Scroll in reviews
-            for _ in range(2):
-                ActionChains(self.driver).scroll_by_amount(0, 1000).perform()
-                time.sleep(1)
-
-            # More buttons
-            more_buttons = self.driver.find_elements(By.XPATH, "//button[contains(text(), 'More')]")
-            for btn in more_buttons[:10]:
+            if photo_tab:
                 try:
-                    self.driver.execute_script("arguments[0].click();", btn)
-                    time.sleep(0.5)
-                except: pass
+                    photo_tab.click()
+                    time.sleep(3)
+                    photo_elements = self.driver.find_elements(By.XPATH, "//div[contains(@style, 'background-image')]")
+                    for pe in photo_elements[:10]:
+                        style = pe.get_attribute("style")
+                        url_match = re.search(r'url\("(.*?)"\)', style)
+                        if url_match:
+                            url = url_match.group(1)
+                            if url not in photo_urls: photo_urls.append(url)
+                        if len(photo_urls) >= 5: break
+                    details['photo_urls'] = "; ".join(photo_urls)
+                    # Go back
+                    tabs = self.driver.find_elements(By.XPATH, "//button[@role='tab']")
+                    for t in tabs:
+                        if "Overview" in t.text:
+                            t.click()
+                            break
+                    time.sleep(1)
+                except:
+                    details['photo_urls'] = "N/A"
+            else:
+                details['photo_urls'] = "N/A"
 
-            review_elements = self.driver.find_elements(By.CSS_SELECTOR, '.wiI79')
-            for r in review_elements[:10]:
-                text = r.text
-                if text:
-                    reviews_list.append(text.replace('\n', ' ').strip())
+            self.seen_businesses.add(biz_id)
+
         except Exception as e:
-            print(f"Error getting reviews: {e}")
+            print(f"Error during extraction: {e}")
+            return None
 
-        return reviews_list
+        return details
 
-def save_to_csv(data, category):
-    if not data:
-        print("No data to save.")
-        return
+    def scrape_category(self, category, location, max_results=10):
+        query = f"{category} in {location}"
+        results = self.search_businesses(query)
+        if not results: return []
+        if results == ["DIRECT_MATCH"]:
+            data = self.scrape_business_details("DIRECT_MATCH")
+            if data == "DUPLICATE": return []
+            return [data] if data else []
+
+        self.scroll_results(max_results)
+        results = self.driver.find_elements(By.CSS_SELECTOR, "a.hfpxzc")
+        scraped_data = []
+        for i in range(min(len(results), max_results)):
+            try:
+                # Refresh elements
+                results = self.driver.find_elements(By.CSS_SELECTOR, "a.hfpxzc")
+                if i >= len(results): break
+                biz_info = self.scrape_business_details(results[i])
+                if biz_info == "DUPLICATE": continue
+                if biz_info:
+                    scraped_data.append(biz_info)
+                    print(f"Scraped: {biz_info.get('name')}")
+            except StaleElementReferenceException:
+                continue
+        return scraped_data
+
+def save_to_csv(data, filename):
+    if not data: return
     df = pd.DataFrame(data)
-    df = df.drop_duplicates(subset=['Name', 'Address'])
-    filename = f"addis_ababa_{category.replace(' ', '_')}.csv"
-    df.to_csv(filename, index=False, encoding='utf-8-sig')
-    print(f"Saved {len(df)} results to {filename}")
-
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="Google Maps Selenium Scraper for Addis Ababa")
-    parser.add_argument("--category", type=str, default="restaurants", help="Category to search for")
-    parser.add_argument("--neighborhoods", nargs="+", help="Specific neighborhoods to search in")
-
-    args = parser.parse_args()
-
-    scraper = GoogleMapsSeleniumScraper(category=args.category, neighborhoods=args.neighborhoods)
-    print(f"Starting scrape for {args.category}...")
-    results = scraper.scrape()
-    save_to_csv(results, args.category)
+    try:
+        existing_df = pd.read_csv(filename)
+        combined_df = pd.concat([existing_df, df], ignore_index=True).drop_duplicates(subset=['name'])
+        combined_df.to_csv(filename, index=False, encoding='utf-8')
+    except FileNotFoundError:
+        df.to_csv(filename, index=False, encoding='utf-8')
+    print(f"Data updated in {filename}")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Google Maps Scraper for Addis Ababa')
+    parser.add_argument('--category', type=str, default='Restaurants', help='Category to search')
+    parser.add_argument('--location', type=str, default='Addis Ababa', help='Location')
+    parser.add_argument('--max', type=int, default=10, help='Max results')
+    parser.add_argument('--output', type=str, default='google_maps_data.csv', help='Output CSV')
+    parser.add_argument('--gui', action='store_true', help='Run with GUI')
+
+    args = parser.parse_args()
+    scraper = GoogleMapsSeleniumScraper(headless=not args.gui)
+    try:
+        data = scraper.scrape_category(args.category, args.location, max_results=args.max)
+        if data:
+            save_to_csv(data, args.output)
+            print(f"Done. Scraped {len(data)} businesses.")
+    finally:
+        del scraper
