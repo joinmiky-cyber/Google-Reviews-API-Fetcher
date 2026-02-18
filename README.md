@@ -35,7 +35,8 @@ This Python tool allows you to collect detailed information about business listi
 4. **Install Playwright Browsers and Dependencies**:
    ```bash
    playwright install chromium
-   # If running on Linux or GitHub Codespaces, you also need:
+
+   # IMPORTANT: If running on Linux or GitHub Codespaces, you MUST run:
    sudo playwright install-deps
    ```
 
@@ -44,11 +45,15 @@ This Python tool allows you to collect detailed information about business listi
 ## How to Run
 
 ### Note for GitHub Codespaces / Linux Servers
-Remote environments usually don't have a graphical interface (display). To run the scraper in these environments, you **must** use the `--headless` flag.
+
+1. **System Dependencies**: You must run `sudo playwright install-deps` once to install the necessary Linux libraries for the browser to run.
+2. **Headless Mode**: Remote environments usually don't have a graphical interface (display). To run the scraper in these environments, you **must** use the `--headless` flag.
 
 ```bash
 python main.py --headless
 ```
+
+**Tip**: This repository includes a `.devcontainer` configuration. If you open this in a new GitHub Codespace, it will attempt to install all dependencies automatically.
 
 If you are running locally on your own computer (Windows, macOS, or Linux with a desktop), you can run it in **headed mode** (default) to see the browser window:
 

@@ -20,7 +20,18 @@ class GoogleMapsScraper:
             neighborhoods = ADDIS_NEIGHBORHOODS
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=self.headless)
+            try:
+                browser = await p.chromium.launch(headless=self.headless)
+            except Exception as e:
+                error_msg = str(e)
+                if "shared libraries" in error_msg or "executable" in error_msg:
+                    print("\n" + "="*60)
+                    print("ERROR: Playwright is missing system dependencies.")
+                    print("If you are on Linux or GitHub Codespaces, please run:")
+                    print("\n    sudo playwright install-deps\n")
+                    print("="*60 + "\n")
+                raise e
+
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             )
