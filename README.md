@@ -1,29 +1,28 @@
-# Addis Ababa Business Data Scraper (Web Scraper)
+# Addis Ababa Business Data Scraper (Selenium)
 
-This Python tool allows you to collect detailed information about business listings in Addis Ababa, Ethiopia, by scraping Google Maps using Playwright. It searches by neighborhood to ensure high coverage of the city.
+This Python tool allows you to collect detailed information about business listings in Addis Ababa, Ethiopia, by scraping Google Maps using Selenium and Firefox.
 
 ## Features
 
-- **Neighborhood Search**: Automatically covers Addis Ababa by searching in multiple neighborhoods (Bole, Piazza, Kazanchis, etc.).
-- **Detailed Information**: Collects names, phone numbers, full addresses, GPS coordinates, ratings, and websites.
+- **Neighborhood Search**: Covers Addis Ababa by searching in multiple neighborhoods (Bole, Piazza, Kazanchis, etc.).
+- **Detailed Information**: Collects names, phone numbers, addresses, GPS coordinates, ratings, and websites.
 - **Photos & Reviews**: Retrieves URLs for up to 5 photos and up to 10 reviews for each business.
-- **Deduplication**: Automatically removes duplicate results found across different searches.
-- **Export to CSV**: Saves all collected data into a clean CSV file.
-- **Extensible**: Easy to add more categories like gyms, cafes, hotels, etc.
+- **Export to CSV**: Saves all collected data into a CSV file.
 
 ---
 
 ## Prerequisites
 
 1. **Python 3.8+**
-2. **Playwright Browsers**: You need to install the Chromium browser used by Playwright.
+2. **Firefox Browser**
+3. **Geckodriver**: The driver for Firefox.
 
 ---
 
 ## Setup Instructions
 
-1. **Clone or Download** this repository to your local machine.
-2. **Create a Virtual Environment** (recommended):
+1. **Clone or Download** this repository.
+2. **Create a Virtual Environment**:
    ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
@@ -32,30 +31,14 @@ This Python tool allows you to collect detailed information about business listi
    ```bash
    pip install -r requirements.txt
    ```
-4. **Install Playwright Browsers and Dependencies**:
-   ```bash
-   playwright install chromium
-
-   # IMPORTANT: If running on Linux or GitHub Codespaces, you MUST run:
-   sudo playwright install-deps
-   ```
+4. **Configure Driver Paths**:
+   Open `main.py` and ensure the following paths match your local system:
+   - `self.profile_path`: Path to your Firefox profile.
+   - `self.geckodriver_path`: Path to your `geckodriver` executable.
 
 ---
 
 ## How to Run
-
-### Note for GitHub Codespaces / Linux Servers
-
-1. **System Dependencies**: You must run `sudo playwright install-deps` once to install the necessary Linux libraries for the browser to run.
-2. **Headless Mode**: Remote environments usually don't have a graphical interface (display). To run the scraper in these environments, you **must** use the `--headless` flag.
-
-```bash
-python main.py --headless
-```
-
-**Tip**: This repository includes a `.devcontainer` configuration. If you open this in a new GitHub Codespace, it will attempt to install all dependencies automatically.
-
-If you are running locally on your own computer (Windows, macOS, or Linux with a desktop), you can run it in **headed mode** (default) to see the browser window:
 
 ```bash
 python main.py
@@ -63,37 +46,18 @@ python main.py
 
 ### Options
 
-You can customize the search using command-line arguments:
-
 - **Change Category**:
   ```bash
   python main.py --category gyms
   ```
-- **Run in Headless Mode** (background):
-  ```bash
-  python main.py --headless
-  ```
 - **Search Specific Neighborhoods**:
   ```bash
-  python main.py --neighborhoods Bole Piazza "Old Airport"
+  python main.py --neighborhoods Bole Piazza
   ```
 
-The results will be saved to a file named `addis_ababa_[CATEGORY].csv`.
-
 ---
 
-## How it Works
+## Important Notes
 
-1. **Search**: The script iterates through a list of major Addis Ababa neighborhoods and searches for your chosen category.
-2. **Scrolling**: It scrolls through the results feed to load as many listings as possible.
-3. **Extraction**: It clicks on each listing, waits for the details to load, and extracts the business information.
-4. **Reviews**: It switches to the "Reviews" tab, scrolls slightly, and grabs up to 10 reviews.
-5. **Deduplication**: It keeps track of `Name` and `Address` to ensure the same business isn't saved twice if it appears in multiple searches.
-
----
-
-## Important Notes & Limitations
-
-- **Scraping Fragility**: Web scraping depends on the visual structure of Google Maps. If Google updates their UI, selectors in `main.py` might need to be updated.
-- **Speed**: Scraping is slower than using an API because it mimics human interaction (clicking, waiting for loads).
-- **Ethical Note**: Please use this tool responsibly and respect Google's Terms of Service. This script is intended for educational purposes and data analysis.
+- **Driver Compatibility**: Ensure your `geckodriver` version matches your Firefox version.
+- **Scraping Fragility**: If Google updates their UI, selectors in `main.py` may need adjustment.
