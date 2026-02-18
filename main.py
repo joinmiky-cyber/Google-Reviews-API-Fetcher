@@ -1,110 +1,220 @@
+import asyncio
 import pandas as pd
-from google_places import GooglePlacesClient
-import time
+from playwright.async_api import async_playwright
+import os
 
-def generate_grid(min_lat, max_lat, min_lon, max_lon, step=0.03):
-    """Generates a grid of (lat, lon) coordinates."""
-    points = []
-    lat = min_lat
-    while lat <= max_lat:
-        lon = min_lon
-        while lon <= max_lon:
-            points.append((lat, lon))
-            lon += step
-        lat += step
-    return points
+# Neighborhoods in Addis Ababa
+ADDIS_NEIGHBORHOODS = [
+    "Bole", "Kazanchis", "Piazza", "Old Airport", "Sarbet",
+    "Haya Hulet", "22 Mazoria", "Merkato", "Kirkos", "Akaki Kality",
+    "Nifas Silk Lafto", "Kolfe Keranio", "Gullele", "Lideta", "Yeka"
+]
 
-def main():
-    # Configuration
-    CATEGORIES = ['restaurant'] # Can add 'gym', 'cafe', etc.
-    # Addis Ababa Bounding Box
-    MIN_LAT, MAX_LAT = 8.83, 9.10
-    MIN_LON, MAX_LON = 38.65, 38.90
-    STEP = 0.04 # Increase/decrease for more/less density
-    SEARCH_RADIUS = 3000 # in meters
+class GoogleMapsScraper:
+    def __init__(self, headless=False):
+        self.headless = headless
+        self.results = []
 
-    client = GooglePlacesClient()
+    async def scrape_category(self, category, neighborhoods=None):
+        if neighborhoods is None:
+            neighborhoods = ADDIS_NEIGHBORHOODS
 
-    all_places = {} # Use dict keyed by place_id to deduplicate
-
-    grid_points = generate_grid(MIN_LAT, MAX_LAT, MIN_LON, MAX_LON, STEP)
-    print(f"Generated {len(grid_points)} grid points for Addis Ababa.")
-
-    for category in CATEGORIES:
-        print(f"Searching for category: {category}")
-        for lat, lon in grid_points:
-            print(f"  Searching near {lat}, {lon}...")
-            # We use 'keyword' instead of 'type' for some cases,
-            # but 'restaurant' is a valid Google type.
-            results = client.search_nearby(
-                location=(lat, lon),
-                radius=SEARCH_RADIUS,
-                type_filter=category
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=self.headless)
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             )
+            page = await context.new_page()
 
-            for place in results:
-                place_id = place['place_id']
-                if place_id not in all_places:
-                    all_places[place_id] = {
-                        'place_id': place_id,
-                        'name': place.get('name'),
-                        'vicinity': place.get('vicinity'),
-                        'rating': place.get('rating'),
-                        'user_ratings_total': place.get('user_ratings_total'),
-                    }
+            for neighborhood in neighborhoods:
+                search_query = f"{category} in {neighborhood}, Addis Ababa"
+                print(f"Searching for: {search_query}")
 
-            # API hygiene
-            time.sleep(0.5)
+                await page.goto(f"https://www.google.com/maps/search/{search_query.replace(' ', '+')}")
 
-    print(f"Found {len(all_places)} unique places. Fetching details...")
+                # Wait for results to load
+                try:
+                    await page.wait_for_selector('div[role="feed"]', timeout=10000)
+                except:
+                    print(f"No results feed found for {neighborhood}")
+                    continue
 
-    # Fetch details for each unique place
-    detailed_data = []
-    for i, (place_id, basic_info) in enumerate(all_places.items()):
-        print(f"[{i+1}/{len(all_places)}] Fetching details for: {basic_info['name']}")
-        details = client.get_details(place_id)
-        if not details:
-            continue
+                # Scroll the feed to load more results
+                await self.scroll_feed(page)
 
-        # Extract Photo References
-        photo_refs = []
-        if 'photos' in details:
-            for photo in details['photos'][:5]: # Limit to 5 photos
-                photo_refs.append(photo.get('photo_reference'))
+                # Get all result links
+                links = await page.query_selector_all('a.hfpxzc')
+                print(f"Found {len(links)} potential listings in {neighborhood}")
 
-        # Extract Reviews
+                for link in links:
+                    try:
+                        # Click the listing
+                        await link.click()
+                        # Wait for the details pane to update
+                        await page.wait_for_timeout(2000)
+
+                        data = await self.extract_business_details(page)
+                        if data:
+                            self.results.append(data)
+                    except Exception as e:
+                        print(f"Error extracting listing: {e}")
+
+            await browser.close()
+
+        return self.results
+
+    async def scroll_feed(self, page):
+        # Find the scrollable feed element
+        feed_selector = 'div[role="feed"]'
+        last_height = await page.evaluate(f'document.querySelector("{feed_selector}").scrollHeight')
+
+        while True:
+            await page.evaluate(f'document.querySelector("{feed_selector}").scrollTo(0, document.querySelector("{feed_selector}").scrollHeight)')
+            await page.wait_for_timeout(2000)
+            new_height = await page.evaluate(f'document.querySelector("{feed_selector}").scrollHeight')
+            if new_height == last_height:
+                break
+            last_height = new_height
+            # Limit scroll for now to avoid endless loops or too many results
+            if last_height > 10000:
+                break
+
+    async def extract_business_details(self, page):
+        try:
+            name_el = await page.query_selector('h1.DUwDvf')
+            name = await name_el.inner_text() if name_el else "N/A"
+
+            # Check for duplicates by name (simple for now)
+            if any(r['Name'] == name for r in self.results):
+                return None
+
+            phone_el = await page.query_selector('button[data-tooltip="Copy phone number"]')
+            phone = await phone_el.inner_text() if phone_el else "N/A"
+
+            address_el = await page.query_selector('button[data-tooltip="Copy address"]')
+            address = await address_el.inner_text() if address_el else "N/A"
+
+            website_el = await page.query_selector('a[data-tooltip="Open website"]')
+            website = await website_el.get_attribute('href') if website_el else "N/A"
+
+            rating_el = await page.query_selector('div.F7kYSe span.ce4YCe') # This selector might change
+            # Alternative rating selector
+            if not rating_el:
+                rating_el = await page.query_selector('span.TTNQpf')
+
+            rating = "N/A"
+            if rating_el:
+                rating_text = await rating_el.inner_text()
+                rating = rating_text.split('\n')[0]
+
+            # Photos
+            photo_elements = await page.query_selector_all('button.g27YNc img')
+            photo_urls = []
+            for img in photo_elements[:5]:
+                src = await img.get_attribute('src')
+                if src:
+                    photo_urls.append(src)
+
+            # Reviews
+            reviews = await self.extract_reviews(page)
+
+            # Extract coordinates from URL
+            url = page.url
+            lat, lon = "N/A", "N/A"
+            if "!3d" in url and "!4d" in url:
+                try:
+                    parts = url.split("!3d")[1].split("!4d")
+                    lat = parts[0]
+                    lon = parts[1].split("!")[0]
+                except:
+                    pass
+            elif "@" in url:
+                try:
+                    coords = url.split("@")[1].split(",")[0:2]
+                    lat, lon = coords[0], coords[1]
+                except:
+                    pass
+
+            return {
+                'Name': name,
+                'Phone': phone,
+                'Address': address,
+                'Website': website,
+                'Rating': rating,
+                'Latitude': lat,
+                'Longitude': lon,
+                'Photo URLs': " | ".join(photo_urls),
+                'Top Reviews': " || ".join(reviews),
+            }
+        except Exception as e:
+            print(f"Failed to extract details: {e}")
+            return None
+
+    async def extract_reviews(self, page):
         reviews_list = []
-        if 'reviews' in details:
-            for r in details['reviews']:
-                reviews_list.append(f"[{r.get('rating')}*] {r.get('author_name')}: {r.get('text')[:200]}...")
+        try:
+            # Click the 'Reviews' tab if it exists
+            reviews_tab = await page.query_selector('button[role="tab"]:has-text("Reviews")')
+            if reviews_tab:
+                await reviews_tab.click()
+                await page.wait_for_timeout(2000)
 
-        row = {
-            'Name': details.get('name'),
-            'Phone': details.get('international_phone_number'),
-            'Address': details.get('formatted_address'),
-            'Latitude': details.get('geometry', {}).get('location', {}).get('lat'),
-            'Longitude': details.get('geometry', {}).get('location', {}).get('lng'),
-            'Rating': details.get('rating'),
-            'Total Ratings': details.get('user_ratings_total'),
-            'Types': ", ".join(details.get('types', [])),
-            'Website': details.get('website'),
-            'Photo References': " | ".join(photo_refs),
-            'Top Reviews': " || ".join(reviews_list),
-            'Place ID': place_id
-        }
-        detailed_data.append(row)
+                # Scroll in the reviews pane
+                review_pane_selector = 'div.m6B62' # Common selector for reviews container
+                # Wait for some reviews to appear
+                await page.wait_for_selector('.wiI79', timeout=5000)
 
-        # Avoid hitting rate limits
-        time.sleep(0.2)
+                # Simple scroll to get more
+                for _ in range(2):
+                    await page.mouse.wheel(0, 1000)
+                    await page.wait_for_timeout(1000)
 
-    # Save to CSV
-    if detailed_data:
-        df = pd.DataFrame(detailed_data)
-        filename = f"addis_ababa_restaurants_{int(time.time())}.csv"
-        df.to_csv(filename, index=False, encoding='utf-8-sig')
-        print(f"Data saved to {filename}")
-    else:
-        print("No data collected.")
+                # Try to click "More" for each review if it exists
+                more_buttons = await page.query_selector_all('button:has-text("More")')
+                for btn in more_buttons[:10]:
+                    try:
+                        await btn.click()
+                        await page.wait_for_timeout(500)
+                    except:
+                        pass
+
+                review_elements = await page.query_selector_all('.wiI79')
+                for r in review_elements[:10]:
+                    text = await r.inner_text()
+                    if text:
+                        reviews_list.append(text.replace('\n', ' ').strip())
+
+            # Switch back to 'About' or 'Overview' tab?
+            # Not strictly necessary if we click the next listing link from the feed.
+        except Exception as e:
+            print(f"Error getting reviews: {e}")
+
+        return reviews_list
+
+def save_to_csv(data, category):
+    if not data:
+        print("No data to save.")
+        return
+    df = pd.DataFrame(data)
+    # Deduplicate just in case
+    df = df.drop_duplicates(subset=['Name', 'Address'])
+    filename = f"addis_ababa_{category.replace(' ', '_')}.csv"
+    df.to_csv(filename, index=False, encoding='utf-8-sig')
+    print(f"Saved {len(df)} results to {filename}")
+
+async def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Google Maps Scraper for Addis Ababa")
+    parser.add_argument("--category", type=str, default="restaurants", help="Category to search for (e.g., restaurants, gyms)")
+    parser.add_argument("--headless", action="store_true", help="Run in headless mode")
+    parser.add_argument("--neighborhoods", nargs="+", help="Specific neighborhoods to search in")
+
+    args = parser.parse_args()
+
+    scraper = GoogleMapsScraper(headless=args.headless)
+    print(f"Starting scrape for {args.category}...")
+    results = await scraper.scrape_category(args.category, neighborhoods=args.neighborhoods)
+    save_to_csv(results, args.category)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

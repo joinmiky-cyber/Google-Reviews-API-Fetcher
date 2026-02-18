@@ -1,13 +1,13 @@
-# Addis Ababa Business Data Scraper (Google Places API)
+# Addis Ababa Business Data Scraper (Web Scraper)
 
-This Python tool allows you to collect detailed information about business listings in Addis Ababa, Ethiopia, using the official Google Places API. It implements a grid-search algorithm to maximize the number of results found within the city.
+This Python tool allows you to collect detailed information about business listings in Addis Ababa, Ethiopia, by scraping Google Maps using Playwright. It searches by neighborhood to ensure high coverage of the city.
 
 ## Features
 
-- **Grid Search**: Automatically covers Addis Ababa by searching multiple overlapping areas to overcome the 60-result limit of a single search.
+- **Neighborhood Search**: Automatically covers Addis Ababa by searching in multiple neighborhoods (Bole, Piazza, Kazanchis, etc.).
 - **Detailed Information**: Collects names, phone numbers, full addresses, GPS coordinates, ratings, and websites.
-- **Photos & Reviews**: Retrieves photo references and the top 5 most helpful reviews for each business.
-- **Deduplication**: Automatically removes duplicate results found during the grid search.
+- **Photos & Reviews**: Retrieves URLs for up to 5 photos and up to 10 reviews for each business.
+- **Deduplication**: Automatically removes duplicate results found across different searches.
 - **Export to CSV**: Saves all collected data into a clean CSV file.
 - **Extensible**: Easy to add more categories like gyms, cafes, hotels, etc.
 
@@ -15,19 +15,8 @@ This Python tool allows you to collect detailed information about business listi
 
 ## Prerequisites
 
-1. **Python 3.7+**
-2. **Google Maps API Key**: You need an API key with the "Places API" enabled.
-
-### How to get a Google Maps API Key
-
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a new project (e.g., "Addis Scraper").
-3. Navigate to **APIs & Services > Library**.
-4. Search for **"Places API"** and click **Enable**.
-5. Navigate to **APIs & Services > Credentials**.
-6. Click **Create Credentials > API key**.
-7. (Optional but recommended) Restrict your API key to only the Places API to secure it.
-8. **Note**: You must have a billing account linked to your Google Cloud project, although Google provides a free monthly credit ($200) which covers thousands of requests.
+1. **Python 3.8+**
+2. **Playwright Browsers**: You need to install the Chromium browser used by Playwright.
 
 ---
 
@@ -43,58 +32,54 @@ This Python tool allows you to collect detailed information about business listi
    ```bash
    pip install -r requirements.txt
    ```
-4. **Configure Environment Variables**:
-   - Rename `.env.example` to `.env`.
-   - Open `.env` and paste your Google Maps API key:
-     ```
-     GOOGLE_MAPS_API_KEY=your_actual_api_key_here
-     ```
+4. **Install Playwright Browsers**:
+   ```bash
+   playwright install chromium
+   ```
 
 ---
 
 ## How to Run
 
-Simply run the `main.py` script:
+By default, the script runs in **headed mode** (browser window visible) so you can see the progress.
 
 ```bash
 python main.py
 ```
 
-The script will:
-1. Generate a grid of coordinates over Addis Ababa.
-2. Search for restaurants near each point.
-3. Fetch full details for every unique restaurant found.
-4. Save the results to a file named `addis_ababa_restaurants_[TIMESTAMP].csv`.
+### Options
+
+You can customize the search using command-line arguments:
+
+- **Change Category**:
+  ```bash
+  python main.py --category gyms
+  ```
+- **Run in Headless Mode** (background):
+  ```bash
+  python main.py --headless
+  ```
+- **Search Specific Neighborhoods**:
+  ```bash
+  python main.py --neighborhoods Bole Piazza "Old Airport"
+  ```
+
+The results will be saved to a file named `addis_ababa_[CATEGORY].csv`.
 
 ---
 
-## How to Extend
+## How it Works
 
-### Adding More Categories
-
-To search for gyms, cafes, or other businesses, open `main.py` and modify the `CATEGORIES` list:
-
-```python
-# Example: Search for both restaurants and gyms
-CATEGORIES = ['restaurant', 'gym']
-```
-
-For a full list of supported types, refer to the [Google Places Types documentation](https://developers.google.com/maps/documentation/places/web-service/supported_types).
-
-### Adjusting Search Density
-
-If you want to find even more businesses, you can make the grid more dense by decreasing the `STEP` value in `main.py`:
-
-```python
-STEP = 0.02  # Default is 0.04. Smaller value = more searches = more cost/time.
-```
+1. **Search**: The script iterates through a list of major Addis Ababa neighborhoods and searches for your chosen category.
+2. **Scrolling**: It scrolls through the results feed to load as many listings as possible.
+3. **Extraction**: It clicks on each listing, waits for the details to load, and extracts the business information.
+4. **Reviews**: It switches to the "Reviews" tab, scrolls slightly, and grabs up to 10 reviews.
+5. **Deduplication**: It keeps track of `Name` and `Address` to ensure the same business isn't saved twice if it appears in multiple searches.
 
 ---
 
 ## Important Notes & Limitations
 
-- **Photos**: For security reasons, the script saves **Photo References** instead of direct URLs. Direct URLs would require embedding your private API key in the CSV file, which is unsafe for sharing. To view a photo, you can use the following URL format, replacing `YOUR_API_KEY` and `PHOTO_REFERENCE`:
-  `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=PHOTO_REFERENCE&key=YOUR_API_KEY`
-- **Review Limit**: The official Google Places API only returns the **5 most helpful reviews** per business.
-- **API Costs**: Each "Place Details" request and "Nearby Search" request incurs a small cost on your Google Cloud billing. The free $200 monthly credit is usually more than enough for a few full city scrapes.
-- **Rate Limiting**: The script includes `time.sleep()` calls to respect Google's rate limits and ensure the `next_page_token` is valid.
+- **Scraping Fragility**: Web scraping depends on the visual structure of Google Maps. If Google updates their UI, selectors in `main.py` might need to be updated.
+- **Speed**: Scraping is slower than using an API because it mimics human interaction (clicking, waiting for loads).
+- **Ethical Note**: Please use this tool responsibly and respect Google's Terms of Service. This script is intended for educational purposes and data analysis.
