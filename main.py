@@ -204,6 +204,14 @@ def save_to_csv(data, category):
 
 async def main():
     import argparse
+    import sys
+
+    # Check for DISPLAY on Linux
+    has_display = True
+    if sys.platform.startswith('linux'):
+        if not os.environ.get('DISPLAY'):
+            has_display = False
+
     parser = argparse.ArgumentParser(description="Google Maps Scraper for Addis Ababa")
     parser.add_argument("--category", type=str, default="restaurants", help="Category to search for (e.g., restaurants, gyms)")
     parser.add_argument("--headless", action="store_true", help="Run in headless mode")
@@ -211,7 +219,12 @@ async def main():
 
     args = parser.parse_args()
 
-    scraper = GoogleMapsScraper(headless=args.headless)
+    headless_mode = args.headless
+    if not has_display and not args.headless:
+        print("Warning: No display detected. Switching to headless mode automatically.")
+        headless_mode = True
+
+    scraper = GoogleMapsScraper(headless=headless_mode)
     print(f"Starting scrape for {args.category}...")
     results = await scraper.scrape_category(args.category, neighborhoods=args.neighborhoods)
     save_to_csv(results, args.category)

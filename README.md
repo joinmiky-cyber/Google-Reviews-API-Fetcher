@@ -32,16 +32,25 @@ This Python tool allows you to collect detailed information about business listi
    ```bash
    pip install -r requirements.txt
    ```
-4. **Install Playwright Browsers**:
+4. **Install Playwright Browsers and Dependencies**:
    ```bash
    playwright install chromium
+   # If running on Linux or GitHub Codespaces, you also need:
+   sudo playwright install-deps
    ```
 
 ---
 
 ## How to Run
 
-By default, the script runs in **headed mode** (browser window visible) so you can see the progress.
+### Note for GitHub Codespaces / Linux Servers
+Remote environments usually don't have a graphical interface (display). To run the scraper in these environments, you **must** use the `--headless` flag.
+
+```bash
+python main.py --headless
+```
+
+If you are running locally on your own computer (Windows, macOS, or Linux with a desktop), you can run it in **headed mode** (default) to see the browser window:
 
 ```bash
 python main.py
